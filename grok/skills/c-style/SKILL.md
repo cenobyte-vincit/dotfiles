@@ -32,7 +32,7 @@ When the target is **Linux**:
 
 - **Follow the BSD convention** — use **`__progname`**, `<err.h>`, `errx`/`usage`, and `strlcpy`/`strlcat` the same way as on BSD.
 - **Do not** use glibc-native alternatives such as `program_invocation_short_name`.
-- Define and initialise **`__progname`** in the project-named CLI `.c` (see below).
+- Declare **`extern char *__progname;`** in translation units that reference it (see below).
 
 Include Linux-specific setup **only** when the user explicitly asks for a **Linux** target.
 
@@ -46,7 +46,7 @@ When the user targets **Linux**, treat it as **BSD-style C on a Linux host** —
 | Fatal errors | `<err.h>` — `errx`, `err`, `warnx` | Ad-hoc `perror` / bare `fprintf` |
 | String copy | `strlcpy` / `strlcat` | Unchecked `strcpy` / misused `strncpy` |
 
-Linux-specific setup (`__progname` definition, basename assignment) appears **only** when the user explicitly asks for Linux. Default (no platform) remains macOS/BSD.
+On Linux, declare **`extern char *__progname;`** in any translation unit that references it. Default (no platform) remains macOS/BSD.
 
 ## Design intent (CLI programs)
 
@@ -54,12 +54,12 @@ Command-line programs follow a consistent **OpenBSD CLI layout**: program name v
 
 | Concern | Approach |
 |---------|----------|
-| Program name | **`__progname`** — libc on macOS/BSD; assigned in CLI `.c` on Linux |
+| Program name | **`__progname`** — libc on macOS/BSD; `extern` on Linux |
 | Fatal errors | `errx(1, …)` from `<err.h>` |
 | Usage mistakes | `usage()` → stderr, `exit(1)` |
 | Preconditions | Guard clauses — early `return` / `errx`, flat happy path |
 | File identity | Header block at top of each `.c` / `.h` |
-| `main()` flow | argc/usage → guards → work (Linux: assign `__progname` first) |
+| `main()` flow | argc/usage → guards → work |
 
 **Libraries** (no `main`) omit `usage` and CLI ordering; keep headers, comments, guards, and string safety.
 
@@ -108,7 +108,7 @@ if (!*path)
 
 ## File header
 
-Every `.c` and `.h` file starts with a **comment header** immediately after any `$OpenBSD$` / licence block:
+Every `.c` and `.h` file starts with a **comment header** at the top of the file:
 
 ```c
 /*
@@ -133,7 +133,7 @@ Every **command-line program** must include:
 2. **`usage()`** — when the program takes arguments
 3. Fatal errors via **`errx(1, …)`** from `<err.h>` — not ad-hoc `fprintf` + `exit`
 4. Guard clauses for preconditions; flat happy path after guards
-5. **`__progname`** used in `usage()` / messages — libc on macOS/BSD; defined once in CLI `.c` on Linux (see below)
+5. **`__progname`** used in `usage()` / messages — libc on macOS/BSD; `extern char *__progname;` on Linux (see below)
 
 ### CLI entry file naming
 
@@ -185,51 +185,7 @@ main(int argc, char *argv[])
 }
 ```
 
-**Linux only** — when the user explicitly targets Linux, define `char *__progname;` at file scope in the project-named CLI `.c` (e.g. `foobar.c`), assign the basename of `argv[0]` at the start of `main`, and follow the BSD convention throughout. Do **not** include this in macOS/BSD code.
-
-```c
-/*
- * foobar.c - ...
- */
-
-#include <err.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-char *__progname;
-
-static void usage(void);
-
-static void
-usage(void)
-{
-	fprintf(stderr, "usage: %s <file>\n", __progname);
-	exit(1);
-}
-
-int
-main(int argc, char *argv[])
-{
-	const char *bn;
-	const char *path;
-
-	bn = strrchr(argv[0], '/');
-	__progname = (bn != NULL) ? bn + 1 : argv[0];
-
-	if (argc != 2)
-		usage();
-
-	path = argv[1];
-	if (!*path)
-		errx(1, "empty path");
-
-	/* ... */
-	return (0);
-}
-```
-
-Other `.c` files that reference `__progname` declare `extern char *__progname;` — they never define it.
+**Linux only** — when the user explicitly targets Linux, declare `extern char *__progname;` at file scope in any `.c` that references it. Do **not** include this in macOS/BSD code.
 
 - Programs with **no arguments** omit `usage()` and the `argc` guard.
 
@@ -237,7 +193,7 @@ Other `.c` files that reference `__progname` declare `extern char *__progname;` 
 
 - Always use **`__progname`** in `usage()` and user-facing messages — never a hard-coded program name.
 - **macOS / BSD (default):** libc provides **`__progname`** — use it directly. No `setprogname()`, no `extern` declaration, no assignment in `main`, no `#if defined(__linux__)`.
-- **Linux (only when specified):** follows the **BSD `__progname` convention** — not `program_invocation_short_name` or other glibc-specific APIs. Define **`char *__progname;`** once at file scope in the project-named CLI `.c` (e.g. `foobar.c`); assign the basename of `argv[0]` at the start of `main`. Other translation units declare **`extern char *__progname;`** — they never define it.
+- **Linux (only when specified):** follows the **BSD `__progname` convention** — not `program_invocation_short_name` or other glibc-specific APIs. Declare **`extern char *__progname;`** in any translation unit that references it.
 - **`errx()`** from `<err.h>` prefixes messages with the program name via `__progname`.
 
 ### `errx()` and `usage()`
@@ -256,18 +212,17 @@ if (argc != 2)
 	usage();
 ```
 
-- **`errx(eval, fmt, …)`** — all unrecoverable fatal errors in CLI code (eval is usually `1`).
+- **`errx(eval, fmt, …)`** — all unrecoverable fatal errors (eval is usually `1`).
 - **`usage()`** — prints `usage: %s …` with **`__progname`** to **stderr**, then **`exit(1)`**.
 - Do not use bare `fprintf(stderr, …); exit(1);` for standardised errors — use `errx` or `usage`.
-- Library functions return error codes; they do not call `errx` (except where aborting the whole process is intentional).
+- Library functions return error codes for recoverable failures; allocation failure is never recoverable — use **`errx`** (see **Allocation**).
 
 ### `main()` ordering (CLI)
 
-1. **Linux only:** assign **`__progname`** from the basename of `argv[0]` (macOS/BSD: skip — libc already set)
-2. `argc` check → `usage()` when the program expects arguments
-3. Other precondition guards (`errx` or early `return 0` only for benign cases)
-4. Bind `argv` entries to `const` pointers / validated values
-5. Program logic
+1. `argc` check → `usage()` when the program expects arguments
+2. Other precondition guards (`errx` or early `return 0` only for benign cases)
+3. Bind `argv` entries to `const` pointers / validated values
+4. Program logic
 
 ## Guard clauses (preferred over nested `if`)
 
@@ -414,7 +369,7 @@ Public functions in headers use a brief block comment:
 
 ```c
 /*
- * Append bytes to buf. Returns 0 on success, -1 on allocation failure.
+ * Append bytes to buf. Returns 0 on success. Aborts on allocation failure.
  * Ownership of src is unchanged. buf must be initialized.
  */
 int buffer_append(buffer_t *buf, const void *src, size_t len);
@@ -581,20 +536,27 @@ typedef struct buffer {
 ## Functions, memory, and errors
 
 - Short, single-purpose functions; `const` on unmodified inputs.
-- Library helpers: return `0` / `-1` on failure; set `errno` when appropriate.
-- CLI `main`: `usage()` for bad argc; `errx()` for fatal runtime errors.
+- Library helpers: return `0` / `-1` on recoverable failure; set `errno` when appropriate. Allocation failure is not recoverable — **`errx`**.
+- CLI `main`: `usage()` for bad argc; `errx()` for fatal runtime errors; `err()` when `errno` applies (e.g. `fopen`).
 - `goto cleanup` only for multi-step teardown; label `cleanup`.
 - Check all allocations; match every `free` to an owner.
 
 ### Allocation
 
-```c
-void *p;
+Check every **`malloc`**, **`calloc`**, and **`realloc`**. On NULL, **`errx(1, …)`** with the function name as the message — in **all** C code (CLI, libraries, helpers):
 
-p = calloc(n, size);
-if (p == NULL)
-	return (-1);
+```c
+int *nums;
+
+nums = malloc(n * sizeof(*nums));
+if (nums == NULL)
+	errx(1, "malloc");
 ```
+
+- Assign, then check — `p = malloc(…);` on one line, `if (p == NULL)` on the next; no assignment inside the `if` condition.
+- Size with **`sizeof(*p)`** (or `n * sizeof(*p)` for arrays) — never `sizeof(struct foo)` when a pointer is already in scope.
+- Message is the literal function name — **`"malloc"`**, **`"calloc"`**, **`"realloc"`** — no format string, no size argument.
+- Do not **`return (-1)`**, **`goto cleanup`**, or propagate allocation failure — abort with **`errx`**.
 
 ### Cleanup with goto
 
@@ -611,16 +573,12 @@ foo(void)
 	b = NULL;
 
 	a = malloc(64);
-	if (a == NULL) {
-		rc = -1;
-		goto cleanup;
-	}
+	if (a == NULL)
+		errx(1, "malloc");
 
 	b = malloc(64);
-	if (b == NULL) {
-		rc = -1;
-		goto cleanup;
-	}
+	if (b == NULL)
+		errx(1, "malloc");
 
 	/* work */
 
@@ -630,6 +588,66 @@ cleanup:
 	return (rc);
 }
 ```
+
+### Temporary files and directories
+
+Use POSIX **`mkdtemp(3)`** and **`mkstemp(3)`** — never **`mktemp`**, **`tmpnam`**, or **`tempnam`**. Templates end in **`XXXXXX`**; creation is exclusive with safe permissions (`0700` dir, `0600` file).
+
+**Base directory** — build from **`secure_getenv("TMPDIR")`**, falling back to **`/tmp`** (short-lived) or **`/var/tmp`** (longer-lived). Use plain **`getenv`** only when the program is known never to run privileged.
+
+**Temporary file** — single scratch file:
+
+```c
+#include <stdlib.h>
+#include <unistd.h>
+
+char path[] = "/tmp/foobar.XXXXXX";
+int fd;
+
+fd = mkstemp(path);
+if (fd < 0)
+	err(1, "mkstemp");
+
+/* ... use fd ... */
+
+unlink(path);
+close(fd);
+```
+
+**Temporary directory** — scratch dir; prefer a dir fd and **`openat(2)`** for files created inside:
+
+```c
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+char dir[] = "/tmp/foobar.XXXXXX";
+int dfd;
+
+if (mkdtemp(dir) == NULL)
+	err(1, "mkdtemp");
+
+dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+if (dfd < 0)
+	err(1, "open %s", dir);
+
+/* optional: unlink(dir) — name disappears; dfd still valid until close */
+
+/* create files inside via openat(dfd, ...) or mkstemp on a path under dir */
+
+close(dfd);
+rmdir(dir);
+```
+
+Rules:
+
+- Template is a **writable char array** — `mkdtemp` / `mkstemp` modify it in place.
+- **Assign, then check** — same discipline as allocation checks.
+- Fatal creation failure: **`err(1, "mkdtemp")`** / **`err(1, "mkstemp")`** — libc sets **`errno`** (same class as **`fopen`**).
+- **Multiple temp files** in one run: one **`mkdtemp`** dir, then files inside via **`openat(dfd, …)`** or **`mkstemp`** on a path under that dir — do not litter `/tmp` with many unrelated prefixes.
+- **Do not** `open` then **`chmod`** — modes are set atomically at creation.
+- **Always clean up** — **`unlink`** / **`close`** / **`rmdir`** on every exit path; use **`goto cleanup`** when several temps are active.
+- **Linux only** (when the user explicitly targets Linux) and no pathname is needed: **`open("/tmp", O_TMPFILE | O_RDWR, 0600)`** or **`memfd_create(…)`** are stronger equivalents — no directory entry, no path races. Default (macOS/BSD) stays **`mkstemp`** / **`mkdtemp`**.
 
 ## Integer and pointer safety
 
@@ -694,10 +712,11 @@ void buffer_free(buffer_t *);
 - [ ] **CLI entry** named after project (`foobar.c`), never `main.c`
 - [ ] **Small programs** stay single-file; `.h` only when size/API warrants a split
 - [ ] **Target platform** respected — BSD convention on Linux; no Linux `#if` on macOS/BSD code
-- [ ] **CLI:** `__progname` (libc on macOS/BSD; `char *__progname;` in CLI `.c` on Linux), `usage()`, `errx()`; `main()` ordering
+- [ ] **CLI:** `__progname` (libc on macOS/BSD; `extern char *__progname;` on Linux), `usage()`, `errx()`; `main()` ordering
 - [ ] **Guard clauses** preferred; **`errx`**: `if (!predicate) errx(…)` — never positive test, never `else errx`, never `&& errx`
 - [ ] **Function comments** (what + why) on helpers; **`main()`** and skeleton **`usage()`** exempt
 - [ ] **Makefile** + **cppcheck** + **README** — new standalone projects; **cppcheck** run during Grok dev either way
 - [ ] **`strlcpy`/`strlcat`/`snprintf`** — no `strcpy`/`strcat`/`sprintf`
 - [ ] `-Wall -Wextra -Werror -pedantic` clean
-- [ ] Allocations checked; resources freed on every exit path
+- [ ] Allocations checked — NULL → **`errx(1, "malloc")`** (or `"calloc"` / `"realloc"`); resources freed on every exit path
+- [ ] **Temp files/dirs** — `mkstemp` / `mkdtemp` only; `secure_getenv("TMPDIR")`; cleaned up on every exit path

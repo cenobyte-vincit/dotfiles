@@ -590,15 +590,75 @@ done
 - Error format: `cannot find '${bin}' in 'PATH=${PATH}'`.
 - When invoking: quote arguments; pass user paths after `--` (`rm -f -- "${path}"`).
 
-## Temporary files
+## Temporary files and directories
+
+Use **`mktemp`** and **`mktemp -d`** only — never **`mktemp -u`**, never predictable paths (`/tmp/$$`, `$RANDOM`, hand-built names). Templates end in **`XXXXXX`**; creation is exclusive with safe permissions.
+
+**Base path** — use an **absolute template** so **`TMPDIR`** cannot redirect creation into an attacker-controlled directory:
+
+- **`/tmp/${__progname}.XXXXXX`** — short-lived scratch (default)
+- **`/var/tmp/${__progname}.XXXXXX`** — longer-lived or larger scratch
+
+**Temporary directory** — default pattern:
 
 ```bash
-tmpdir=""
-tmpdir="$(mktemp -d)"
-trap '[ -n "${tmpdir}" ] && rm -rf "${tmpdir}"' EXIT
+local tmpdir=""
+
+trap '[ -n "${tmpdir}" ] && rm -rf -- "${tmpdir}"' EXIT
+
+tmpdir="$(mktemp -d "/tmp/${__progname}.XXXXXX")"
+[ -d "${tmpdir}" ] || \
+	errx "mktemp -d"
 ```
 
-Register the `trap` before any operation that might fail.
+**Temporary file** — single scratch file:
+
+```bash
+local tmpfile=""
+
+trap '[ -n "${tmpfile}" ] && rm -f -- "${tmpfile}"' EXIT
+
+tmpfile="$(mktemp "/tmp/${__progname}.XXXXXX")"
+[ -f "${tmpfile}" ] || \
+	errx "mktemp"
+```
+
+**Multiple temp files** — one directory, files inside:
+
+```bash
+local tmpdir=""
+local tmpfile=""
+local tmpcfg=""
+
+trap 'cleanup_temps' EXIT
+
+# Remove scratch dir (and contents) and any standalone temp file on exit.
+cleanup_temps() {
+	[ -n "${tmpdir}" ] && rm -rf -- "${tmpdir}"
+	[ -n "${tmpfile}" ] && rm -f -- "${tmpfile}"
+}
+
+tmpdir="$(mktemp -d "/tmp/${__progname}.XXXXXX")"
+[ -d "${tmpdir}" ] || \
+	errx "mktemp -d"
+
+tmpfile="$(mktemp "${tmpdir}/part.XXXXXX")"
+[ -f "${tmpfile}" ] || \
+	errx "mktemp"
+
+tmpcfg="$(mktemp "${tmpdir}/cfg.XXXXXX")"
+[ -f "${tmpcfg}" ] || \
+	errx "mktemp"
+```
+
+Rules:
+
+- Register the **`EXIT` trap before** creating temps — so a later failure still runs cleanup once paths are set.
+- **`local`** temps inside **`main()`** (or a helper that owns the lifecycle).
+- Creation failure → **`errx "mktemp"`** or **`errx "mktemp -d"`** — guard clause, not `if`/`fi`.
+- Cleanup: **`rm -f --`** for files, **`rm -rf --`** for directories; guard with **`[ -n … ]`** in the trap.
+- **Do not** `chmod` after create — `mktemp` sets safe permissions at creation.
+- **`mktemp`** is expected in the default **`PATH`** — no dependency-loop entry unless the script supports a stripped environment.
 
 ## Testing and linting
 
@@ -649,3 +709,4 @@ cat -A script.sh   # expect ^I for indents, not spaces
 - [ ] Verbose output: `echo "${FUNCNAME[0]} …"`
 - [ ] Bash builtins before externals; no UUOC (`cat`/`head`/`tail` where `$(<file>)`, `readarray`, or `cmd file` suffices)
 - [ ] `bash -n` and `shellcheck` clean
+- [ ] **Temp files/dirs** — `mktemp` / `mktemp -d` with `/tmp/${__progname}.XXXXXX`; `EXIT` trap before creation; cleaned up on exit
