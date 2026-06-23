@@ -5,8 +5,9 @@ description: >
   questions, CLI and OS specification, functional and unit test design,
   test-driven development with Makefile test targets, then language-skill
   verification.
-  Prefer starting with /goal <objective>. Use when implementing, building, or
-  creating a new script, CLI tool, or C program; when extending one
+  Prefer starting with /goal <objective>. Functional tests (good/bad CLI args and
+  inputs) and C unit tests are mandatory for new projects. Use when implementing,
+  building, or creating a new script, CLI tool, or C program; when extending one
   substantially; or when the user runs /code-workflow or /goal.
 metadata:
   short-description: "Discovery → tests → TDD → done"
@@ -347,24 +348,37 @@ Report completion with:
 
 ## Goal mode (`/goal`)
 
-**`/goal` is the preferred way to start this workflow** (see **Preferred start** above). It works alongside the phase structure at different layers:
+**`/goal` is the preferred way to start this workflow** (see **Preferred start** above). It sets the **outcome** across turns; it does **not** replace this skill. A goal is active until **`update_goal(completed: true)`** — and that may happen only after **Phase 4**, including both test tiers.
 
 | Mechanism | Role |
 |-----------|------|
 | **`/goal`** | Cross-turn objective — what to achieve; persists until `completed: true` |
-| **`code-workflow`** | How to achieve it — phases, gates, TDD, verification |
+| **`code-workflow`** | How to achieve it — phases, gates, functional + unit tests, TDD, verification |
 
-When a goal is active (via **`/goal <objective>`** or an existing session goal), follow this skill's phases and use **`update_goal`** to log progress.
+When a goal is active (via **`/goal <objective>`** or an existing session goal), follow this skill's phases and use **`update_goal`** to log progress. **`/goal` never skips** discovery, test-plan approval, functional scaffolding, or (for C) unit-test scaffolding.
 
 ### Goal text
 
-Phrase the objective as an **outcome**, not a process skip:
+Phrase the objective as an **outcome**, not a process skip. **Always mention tests** so the goal cannot be marked done without them:
+
+**Bash** — functional tests only:
 
 ```
-/goal Build the froobar CLI (macOS): parse JSON config, validate paths, exit codes documented; all make test and make check green
+/goal Build the froobar script (macOS): validate paths, documented exit codes;
+      functional tests (good/bad args and inputs); make test and make check green
 ```
 
-Avoid objectives that bypass gates (e.g. "implement without asking") — discovery and test-plan approval still require user input.
+**C** — functional and unit tests:
+
+```
+/goal Build the froobar CLI (macOS): parse JSON config, validate paths;
+      functional tests (good/bad args and inputs) and unit tests for modules;
+      make test-unit, make test-functional, and make check green
+```
+
+When the user omits tests from their **`/goal`** text, **append** the test requirement to the working objective (tell them what you added) and still run the full workflow.
+
+Avoid objectives that bypass gates (e.g. "implement without asking", "skip tests", "prototype only") — discovery and test-plan approval still require user input.
 
 ### `update_goal` usage
 
@@ -372,9 +386,9 @@ Log phase transitions and batch results; do **not** set **`completed: true`** un
 
 ```text
 update_goal(message: "Phase 1 complete — spec approved")
-update_goal(message: "Phase 2 complete — test scaffold failing as expected")
-update_goal(message: "Phase 3 — parse_config green; wiring main next")
-update_goal(completed: true, message: "make test and make check pass; bash-style checklist done")
+update_goal(message: "Phase 2 complete — functional + unit scaffolds failing as expected")
+update_goal(message: "Phase 3 — parse_config unit tests green; wiring main next")
+update_goal(completed: true, message: "make test-unit + make test-functional + make check pass; c-style checklist done")
 ```
 
 Use **`blocked_reason`** only when genuinely stuck after multiple attempts — not while waiting for user answers in discovery or test-plan approval.
@@ -384,9 +398,9 @@ Use **`blocked_reason`** only when genuinely stuck after multiple attempts — n
 | Phase | Goal mode behaviour |
 |-------|---------------------|
 | **Discovery** | Ask questions one at a time; pause for user answers — goal does not auto-fill the spec |
-| **Test plan** | Pause for approval before scaffolding |
-| **TDD / parallel subagents** | Drive autonomously through units; run **`make test`** each step |
-| **Done** | **`update_goal(completed: true)`** only after full verification |
+| **Test plan** | Pause for approval before scaffolding functional (and unit, for C) plans |
+| **TDD / parallel subagents** | Drive autonomously through units; run **`make test-unit`** / **`make test`** each step |
+| **Done** | **`update_goal(completed: true)`** only after **`make test`**, both tiers for C, and lint/style checklists |
 
 **`/goal status`**, **`/goal pause`**, **`/goal resume`**, and **`/goal clear`** work as usual. Pausing a goal does not suspend style-skill requirements.
 

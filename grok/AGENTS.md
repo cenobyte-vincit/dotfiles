@@ -10,6 +10,8 @@ When writing or editing bash/shell scripts, follow the `bash-style` skill.
 
 When creating or substantially extending a bash script or C program, follow the `code-workflow` skill before writing implementation code. Prefer starting with `/goal <objective>`.
 
+New projects are not done until tests pass. **Functional tests** (good/bad CLI args and inputs) are always required. **Unit tests** are required for C (`make test-unit` and `make test-functional`; bash uses functional tests only). Do not set a `/goal` complete until `make test` and `make check` are green.
+
 Defaults: C17 with `-Wall -Wextra -Werror`; bash with `set -euo pipefail`.
 
 ## Text files
