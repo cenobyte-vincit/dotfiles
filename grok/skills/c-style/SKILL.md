@@ -487,7 +487,13 @@ src/
   module.h
 include/            # optional shared public headers
 tests/
-  test_module.c
+  functional/
+    run_tests.sh
+    fixtures/
+    t001_good_args.sh
+    ...
+  unit/
+    test_module.c
 ```
 
 - One primary module per `.c` file when practical.
@@ -677,11 +683,79 @@ Rules:
 
 ## Testing
 
-New or substantial standalone programs follow the **`code-workflow`** skill for discovery, functional tests, and TDD via **`make test`**.
+New or substantial standalone programs follow the **`code-workflow`** skill for discovery, test plans, and TDD via **`make test`**. C projects use **two tiers**:
 
-- Unit tests for public API and critical error paths.
-- Test allocation failure paths with injectable allocators or wrapper hooks when practical.
-- Fuzz or property-test parsers and decoders that handle untrusted input.
+| Tier | Target | Makefile target |
+|------|--------|-----------------|
+| **Functional** | Built CLI binary end-to-end | **`make test-functional`** |
+| **Unit** | Modules and helpers in-process | **`make test-unit`** |
+
+**`make test`** runs **`test-unit`** then **`test-functional`**.
+
+### Functional tests (required)
+
+Shell scripts under **`tests/functional/`** invoke the built program and assert the CLI contract. Follow **`bash-style`** for runners and scenario scripts.
+
+Every CLI program needs functional coverage for **arguments** and **inputs**:
+
+- **Good arguments** — valid flags and positionals; program completes with exit `0` and expected behaviour.
+- **Bad arguments** — invalid `argc`, flags, or combinations; program **does not proceed** into main work — **`usage()`** or **`errx()`**, non-zero exit, expected stderr.
+- **Good inputs** — known-valid files, stdin, or env; inputs are **parsed and honoured**; happy-path stdout, side effects, exit `0`.
+- **Bad inputs** — missing, empty, malformed, or inaccessible inputs; program **fails cleanly** — non-zero exit, expected stderr, **no partial success output** or half-written artefacts.
+
+Store reusable payloads in **`tests/functional/fixtures/`**. Use **`mkdtemp`** / **`mkstemp`** for scratch paths (see **Temporary files and directories**). Assert stderr matches **`usage: %s …`** or **`__progname`:**-prefixed **`errx`** messages.
+
+### Unit tests (required)
+
+C test binaries under **`tests/unit/`** link production sources and exercise functions without spawning the CLI.
+
+- Cover **public API** and **`static`** helpers (compile test TU with the module `.c`, or use a test-only internal header).
+- Cover **recoverable error returns** (`-1`, `NULL`, etc.) — not fatals that call **`errx`** / **`usage`** (those belong in functional tests).
+- One primary test file per module when practical: **`tests/unit/test_<module>.c`**.
+
+#### Minimal harness
+
+Use a small local harness — no external test framework required:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define TEST_ASSERT(cond) do { \
+	if (!(cond)) { \
+		fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
+		return (1); \
+	} \
+} while (0)
+
+static int
+test_parse_good(void)
+{
+	/* ... */
+	return (0);
+}
+
+int
+main(void)
+{
+	if (test_parse_good() != 0)
+		exit (1);
+	printf("PASS\n");
+	return (0);
+}
+```
+
+Test functions return **`0`** on success, **`1`** on failure; **`main`** exits non-zero if any test fails.
+
+#### Optional depth
+
+- **Allocation failure** — injectable allocators or wrapper hooks when practical.
+- **Fuzz / property tests** — parsers and decoders that handle untrusted input; run separately or behind a Makefile target, not required for every project.
+
+### Makefile
+
+New standalone C projects expose **`test-unit`**, **`test-functional`**, and **`test`** (see **`code-workflow`**). Document all three in **README.md**.
 
 ## Headers
 
@@ -722,3 +796,5 @@ void buffer_free(buffer_t *);
 - [ ] `-Wall -Wextra -Werror -pedantic` clean
 - [ ] Allocations checked — NULL → **`errx(1, "malloc")`** (or `"calloc"` / `"realloc"`); resources freed on every exit path
 - [ ] **Temp files/dirs** — `mkstemp` / `mkdtemp` only; `secure_getenv("TMPDIR")`; cleaned up on every exit path
+- [ ] **Functional tests** — `tests/functional/` covers good/bad CLI args and good/bad inputs; **`make test-functional`** green
+- [ ] **Unit tests** — `tests/unit/` covers public API and critical helpers; **`make test-unit`** green; fatals tested only via functional suite

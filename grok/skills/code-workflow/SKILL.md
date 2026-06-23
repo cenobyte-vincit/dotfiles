@@ -2,8 +2,9 @@
 name: code-workflow
 description: >
   Default workflow for implementing new bash scripts and C programs: discovery
-  questions, CLI and OS specification, functional test design, test-driven
-  development with Makefile test targets, then language-skill verification.
+  questions, CLI and OS specification, functional and unit test design,
+  test-driven development with Makefile test targets, then language-skill
+  verification.
   Prefer starting with /goal <objective>. Use when implementing, building, or
   creating a new script, CLI tool, or C program; when extending one
   substantially; or when the user runs /code-workflow or /goal.
@@ -44,9 +45,11 @@ Example:
 Do **not** write implementation code until:
 
 1. **Discovery** is complete and the user has approved the specification summary.
-2. **Functional tests** are drafted, scaffolded (failing is fine), and the user has approved the test plan.
+2. **Test plans** are drafted, scaffolded (failing is fine), and the user has approved them:
+   - **Functional tests** — always (bash and C): CLI contract, inputs, exit codes, stdout/stderr.
+   - **Unit tests** — C only: scope for each module/helper under test (may be empty stubs until Phase 3).
 
-During implementation, do **not** start the next function or feature until the current one's tests pass via **`make test`**.
+During implementation, do **not** start the next function or feature until the current one's tests pass via **`make test`** (or the relevant **`make test-unit`** / **`make test-functional`** subset).
 
 Do **not** mark the work **done** until every criterion in **Definition of done** is satisfied.
 
@@ -76,29 +79,57 @@ Cover all of these before summarising:
 
 ---
 
-## Phase 2 — Functional test design
+## Phase 2 — Test design (functional + unit)
 
-Guide the user into **functional** test cases before any production code.
+Guide the user into test cases **before** any production code. Two tiers apply:
 
-### What to propose
+| Tier | Bash | C |
+|------|------|---|
+| **Functional** | Invoke the script; assert CLI contract | Shell tests invoke the built binary; assert CLI contract |
+| **Unit** | N/A (whole script is the unit) | C test binaries call modules/helpers in-process |
 
-Draft a numbered test plan covering:
+### 2a — Functional test plan (required)
 
-- **Happy path** — typical successful use
-- **Usage errors** — wrong argument count, invalid flags
-- **Precondition failures** — missing files, bad permissions, missing dependencies
-- **Edge cases** — empty input, boundary values, malformed data
-- **Platform-specific behaviour** — only when OS targeting requires it
+Draft a **numbered functional test plan** covering end-to-end behaviour. Every CLI program must include cases for **command-line arguments** and **inputs** in both directions below.
 
-Present the plan and ask the user to approve, add, or remove cases.
+#### CLI arguments
+
+- **Good arguments** — valid flag combinations and positional args the spec allows; assert the program accepts them, runs to completion, and returns the expected exit code (usually `0`).
+- **Bad arguments** — wrong `argc`, unknown flags, mutually exclusive options, out-of-range numeric flags; assert the program **does not continue** into main work: calls **`usage()`** or **`errx()`** as specified, exits non-zero, and emits the expected stderr (e.g. `usage: prog …`).
+
+#### Inputs (files, stdin, or other data channels)
+
+- **Good inputs** — known-valid fixtures (files, stdin payloads, env the spec defines); assert inputs are **accepted and parsed correctly** and the program **executes the happy path** — expected stdout, side effects (created files, etc.), and exit `0`. Where parsing is observable only via output or behaviour, assert those observables explicitly.
+- **Bad inputs** — missing paths, empty files, malformed/truncated data, permission failures, oversize input; assert the program **stops before or without completing work** — non-zero exit, expected error message on stderr, and **no partial success output** (no half-written files, no misleading stdout).
+
+#### Other functional categories
+
+- **Happy path** — typical successful end-to-end use (may overlap good-args + good-inputs cases).
+- **Precondition failures** — missing dependencies, bad permissions not covered above.
+- **Edge cases** — empty input, boundary values, platform-specific behaviour when OS targeting requires it.
+
+Map each numbered case to a **concrete test file** (e.g. `#4 bad flag → t004_bad_flag.sh`). Present the plan and ask the user to approve, add, or remove cases.
+
+### 2b — Unit test plan (C only)
+
+For C deliverables, draft a second numbered plan listing **modules and helpers** to cover with in-process unit tests:
+
+- Public API functions and **`static`** helpers (via test translation units per **`c-style`**).
+- Return-code error paths recoverable without **`errx`**.
+- Critical parsing/validation logic worth testing without spawning the full CLI.
+
+Bash scripts skip 2b unless helpers live in sourced library files — then list those functions and their test files.
+
+Present the unit plan for approval together with the functional plan (C), or proceed after functional approval alone (bash).
 
 ### Scaffold (after test-plan approval)
 
 Create test infrastructure **before** the program under test:
 
-1. **Makefile** with a **`test`** target (and **`check`** / **`lint`** per language skill).
-2. **Test files** that invoke the program or script and assert exit codes and output.
-3. Run **`make test`** — tests should **fail** until implementation exists (red phase).
+1. **Makefile** with **`test`**, **`test-functional`**, and (C only) **`test-unit`** targets, plus **`check`** / **`lint`** per language skill.
+2. **Functional test files** that invoke the program or script and assert exit codes, stdout, and stderr.
+3. **Unit test files** (C) — binaries or stubs that compile and fail until implementation exists.
+4. Run **`make test`** — all tiers should **fail** until implementation exists (red phase).
 
 ### Layout — new standalone bash script
 
@@ -107,8 +138,12 @@ Makefile
 README.md
 script_name.sh          # stub or absent until Phase 3
 tests/
-  run_tests.sh          # test runner — follows bash-style
-  t001_happy_path.sh    # one scenario per file when practical
+  fixtures/             # known-good and known-bad input files
+  run_tests.sh          # functional runner — follows bash-style
+  t001_good_args.sh     # one scenario per file when practical
+  t002_bad_args.sh
+  t003_good_input.sh
+  t004_bad_input.sh
   ...
 ```
 
@@ -121,59 +156,85 @@ Makefile
 README.md
 program_name.c          # stub or minimal main until Phase 3
 tests/
-  test_module.c         # unit tests for each module / helper
-  ...
+  functional/
+    run_tests.sh        # functional runner — follows bash-style
+    fixtures/           # known-good and known-bad input files
+    t001_good_args.sh   # one scenario per file when practical
+    t002_bad_args.sh
+    t003_good_input.sh
+    t004_bad_input.sh
+    ...
+  unit/
+    test_module.c       # unit tests for each module / helper
+    ...
 ```
 
 Split headers and modules per **`c-style`** when the program outgrows a single file.
 
-### Makefile — `test` target (required)
+### Makefile — `test` targets (required)
 
-Every new standalone project must expose:
+Every new standalone project must expose **`test`** as the single entry point Grok runs during development. Prefer splitting tiers:
 
 ```makefile
-.PHONY: all clean test check lint
-
-test:
-	@$(MAKE) -f Makefile.test test
+.PHONY: all clean test test-functional test-unit check lint
 ```
 
-Or inline the test recipe in the main Makefile. The **`test`** target must be the single entry point Grok runs during development.
+Or inline recipes in the main Makefile.
 
-**Bash** — `test` runs the test runner (e.g. `tests/run_tests.sh`) and propagates failure:
+**Bash** — functional tests only; `test` is an alias for `test-functional`:
 
 ```makefile
-test:
+test-functional:
 	@./tests/run_tests.sh
+
+test: test-functional
 ```
 
-**C** — `test` builds and runs test binaries; fail on any non-zero exit:
+**C** — `test` runs unit then functional suites:
 
 ```makefile
-TEST_BINS = tests/test_module
+PROG = program_name
+TEST_BINS = tests/unit/test_module
 
-test: $(TEST_BINS)
+test-unit: $(TEST_BINS)
 	@for t in $(TEST_BINS); do \
 		echo "==> $$t"; \
 		./$$t || exit 1; \
 	done
+
+test-functional: $(PROG)
+	@./tests/functional/run_tests.sh ./$(PROG)
+
+test: test-unit test-functional
 ```
 
 Also include **`check`** / **`lint`** targets required by **`c-style`** (cppcheck) or **`bash-style`** (shellcheck) for new standalone projects.
 
-Document **`make test`** and dev dependencies in **README.md**.
+Document **`make test`**, **`make test-unit`**, **`make test-functional`**, and dev dependencies in **README.md**.
 
 ### Test runner conventions
 
-**Bash test scripts** follow **`bash-style`** (shebang, `set -euo pipefail`, `errx`, tabs). Each test:
+#### Functional tests (bash and C)
 
-- Invokes the script under test with known inputs.
-- Compares **exit code** and **stdout/stderr** to expectations (`diff`, `grep`, or `[[ … ]]`).
-- Prints `PASS` / `FAIL` with a short description; the runner exits non-zero on any failure.
+Functional runners follow **`bash-style`** (shebang, `set -euo pipefail`, `errx`, tabs). Each scenario script:
 
-**C tests** are small programs or functions that call the unit under test and **`return (1)`** / **`exit (1)`** on assertion failure. Test **`static`** helpers by compiling test translation units with the same `.c` file or via a test-only header — keep production symbols `static` until a header is warranted.
+- Invokes the script or **`$(PROG)`** binary with explicit arguments and inputs (file paths, stdin redirection, env).
+- Captures **exit code**, **stdout**, and **stderr** separately.
+- **Good cases** — assert exit `0`, stdout (and stderr if applicable) match golden files or patterns; verify side effects when the spec requires them.
+- **Bad cases** — assert non-zero exit; stderr matches expected `usage:` or `progname: message` from **`usage()`** / **`errx()`**; stdout is empty or unchanged; no partial artefacts remain.
+- Prints `PASS` / `FAIL` with the plan case number; the runner exits non-zero on any failure.
 
-Proceed to Phase 3 only after the scaffold exists and the user has approved the test plan.
+Use **`tests/functional/fixtures/`** for checked-in good/bad input files. Create ephemeral dirs with **`mkdtemp`** when tests must write scratch space (see **`c-style`**).
+
+#### Unit tests (C only)
+
+Unit tests are small programs that link module code and call the unit under test in-process. On assertion failure, **`return (1)`** from the test function or **`exit (1)`** from **`main`**. Use the harness macros in **`c-style`**.
+
+Test **`static`** helpers by compiling the test translation unit with the same `.c` file or via a test-only header — keep production symbols `static` until a header is warranted.
+
+Do **not** test **`errx()`** / **`usage()`** fatals in unit tests — cover those in **functional** bad-args / bad-inputs cases.
+
+Proceed to Phase 3 only after the scaffold exists and the user has approved both test plans (functional; plus unit for C).
 
 ---
 
@@ -205,9 +266,9 @@ Grok can run implementation in parallel using **`spawn_subagent`**. Subagents ar
 | Parallel OK | Stay serial |
 |-------------|-------------|
 | Independent helpers or modules (e.g. `parse_line` and `format_date`) | B depends on A's behaviour or symbols |
-| Separate test files per unit (`tests/t010_*.sh`, `tests/test_parse.c`) | Shared single file being edited by multiple agents |
+| Separate test files per unit (`tests/t010_*.sh`, `tests/unit/test_parse.c`) | Shared single file being edited by multiple agents |
 | Phase 2: drafting many test scaffolds at once | Integrating `main()` / CLI wiring before core units are tested |
-| Distinct C modules with their own `.c` / test binary | Refactoring interfaces between coupled units |
+| Distinct C modules with their own `.c` / `tests/unit/test_<module>` binary | Refactoring interfaces between coupled units |
 
 Dependency order still wins: a caller's tests must not be implemented before the callee it relies on is green — unless the callee is stubbed and tests mock only the unit boundary.
 
@@ -220,7 +281,7 @@ The **parent session orchestrates**; subagents implement scoped slices. The pare
 3. **Subagent prompt** must include:
    - The unit scope and file ownership (only touch those files).
    - **`bash-style`** or **`c-style`** as applicable.
-   - Instructions: write/extend tests for the unit → implement minimal code → run **`make test`** (or the unit's test subset) until green.
+   - Instructions: write/extend tests for the unit → implement minimal code → run **`make test-unit`** (or the unit's test binary) until green; parent runs **`make test`** after integration.
    - The shared spec summary from Phase 1 (CLI, OS, purpose).
 4. **Wait** with **`wait_commands_or_subagents`** (`mode: wait_all`) or poll with **`get_command_or_subagent_output`**.
 5. **Integrate** — parent runs full **`make test`**. Fix integration issues (wiring, `main`, Makefile, shared headers) serially.
@@ -231,7 +292,7 @@ The **parent session orchestrates**; subagents implement scoped slices. The pare
 Default subagent isolation is **`none`** (shared workspace). Parallel subagents editing the **same file** will conflict.
 
 - Assign **one primary source file + matching test file(s)** per subagent.
-- For C, prefer separate **`tests/test_<module>`** binaries per module.
+- For C, prefer separate **`tests/unit/test_<module>`** binaries per module.
 - If units must touch shared files (e.g. one `main.c`), keep those edits **serial** or use **`isolation: worktree`** per subagent and merge after each batch — worktrees add merge overhead; prefer file partitioning first.
 
 #### Subagent types
@@ -264,10 +325,12 @@ Work is **done** only when **all** of the following hold:
 | Check | Bash | C |
 |-------|------|---|
 | **`make test`** | All tests pass | All tests pass |
+| **Functional tests** | Good/bad args and inputs covered; `make test-functional` green | CLI scenarios from Phase 2 plan exist; `make test-functional` green |
+| **Unit tests** | N/A | Public API + critical helpers covered; `make test-unit` green |
 | **Lint / analysis** | `bash -n`, **shellcheck** (project target or direct) | **cppcheck** via `make check` or equivalent |
 | **Style skill checklist** | **`bash-style`** review checklist complete | **`c-style`** review checklist complete |
 | **Build** | Script executable; `bash -n` clean | `make all` with `-Wall -Wextra -Werror` clean |
-| **Docs** | README lists test and lint commands | README lists cppcheck, test, and build commands |
+| **Docs** | README lists test and lint commands | README lists cppcheck, test tiers, and build commands |
 
 Run the checks yourself before declaring done — do not ask the user to run them unless execution is impossible in the environment.
 
@@ -276,7 +339,7 @@ Optionally run **`/check-work`** for a final verification pass when the user wan
 Report completion with:
 
 - What was built (purpose, CLI, OS).
-- Test count and **`make test`** result.
+- Functional and unit test counts (unit N/A for bash) and **`make test`** result.
 - Lint/analysis result.
 - Any deliberate limitations or follow-ups.
 
@@ -344,7 +407,7 @@ Use **`blocked_reason`** only when genuinely stuck after multiple attempts — n
     ↓
 Discovery (questions → spec approval)
     ↓
-Test plan (cases → user approval → scaffold → make test fails)
+Test plans (functional + unit for C → user approval → scaffold → make test fails)
     ↓
 TDD loop (test → implement → make test; parallel subagents when units are independent)
     ↓
