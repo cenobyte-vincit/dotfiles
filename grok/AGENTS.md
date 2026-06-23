@@ -8,6 +8,8 @@ When writing or editing C code, follow the `c-style` skill.
 
 When writing or editing bash/shell scripts, follow the `bash-style` skill.
 
+When creating or substantially extending a bash script or C program, follow the `code-workflow` skill before writing implementation code. Prefer starting with `/goal <objective>`.
+
 Defaults: C17 with `-Wall -Wextra -Werror`; bash with `set -euo pipefail`.
 
 ## Text files

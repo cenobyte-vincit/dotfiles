@@ -662,6 +662,8 @@ Rules:
 
 ## Testing and linting
 
+New or substantial standalone scripts follow the **`code-workflow`** skill for discovery, functional tests, and TDD via **`make test`**.
+
 ### When required
 
 Run **`bash -n`** and **`shellcheck`** when you:

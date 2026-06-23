@@ -677,6 +677,8 @@ Rules:
 
 ## Testing
 
+New or substantial standalone programs follow the **`code-workflow`** skill for discovery, functional tests, and TDD via **`make test`**.
+
 - Unit tests for public API and critical error paths.
 - Test allocation failure paths with injectable allocators or wrapper hooks when practical.
 - Fuzz or property-test parsers and decoders that handle untrusted input.
